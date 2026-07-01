@@ -259,10 +259,30 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 	// and expects VP8/VP8L immediately; ALPH causes the check to fail and the frame
 	// is silently skipped. Fix: walk subchunks until VP8/VP8L is found.
 	t.Run("ANMF with ALPH subchunk before VP8 decodes first frame", func(t *testing.T) {
-		alphChunk := mkChunk("ALPH", []byte{0x00}) // minimal 1-byte alpha flags payload
+		// mkANMF writes an all-zero 16-byte frame header, so wMinus1=hMinus1=0 → 1×1 canvas.
+		// The ALPH payload needs: 1 flag byte (0x00 = uncompressed) + 1×1 = 1 alpha byte.
+		alphChunk := mkChunk("ALPH", []byte{0x00, 0xFF})
 		img, err := d.DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(alphChunk, vp8Chunk))))
 		require.NoError(t, err)
 		require.NotNil(t, img)
+	})
+
+	t.Run("ANMF VP8 with ALPH builds VP8X extended container", func(t *testing.T) {
+		// Verify the container structure directly without a full decode.
+		// VP8X must precede ALPH so the golang webp decoder accepts the alpha chunk.
+		alph := mkChunk("ALPH", []byte{0x00})
+		payload := make([]byte, anmfFrameHeaderSize+len(alph)+len(vp8Chunk))
+		payload[6] = 7 // wMinus1 = 7 (8 px wide)
+		payload[9] = 3 // hMinus1 = 3 (4 px tall)
+		copy(payload[anmfFrameHeaderSize:], alph)
+		copy(payload[anmfFrameHeaderSize+len(alph):], vp8Chunk)
+
+		container, err := anmfContainer(payload)
+		require.NoError(t, err)
+		require.Equal(t, "VP8X", string(container[12:16]))
+		require.Equal(t, byte(0x10), container[20]) // alpha flag
+		require.Equal(t, byte(7), container[24])    // wMinus1 low byte
+		require.Equal(t, byte(3), container[27])    // hMinus1 low byte
 	})
 
 	t.Run("unknown subchunk before VP8 is walked past", func(t *testing.T) {
