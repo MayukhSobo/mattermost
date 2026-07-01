@@ -20,6 +20,12 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
+const (
+	riffChunkHeaderSize = 8  // FourCC (4 bytes) + uint32 data size (4 bytes)
+	riffContainerSize   = 12 // "RIFF" + uint32 total size + "WEBP" FourCC
+	anmfFrameHeaderSize = 16 // Frame X, Y, Width, Height, Duration, Flags
+)
+
 // DecoderOptions holds configuration options for an image decoder.
 type DecoderOptions struct {
 	// The level of concurrency for the decoder. This defines a limit on the
@@ -125,20 +131,19 @@ func GetDimensions(imageData io.Reader) (width int, height int, err error) {
 	return
 }
 
-const (
-	riffChunkHeaderSize = 8  // FourCC (4 bytes) + uint32 data size (4 bytes)
-	riffContainerSize   = 12 // "RIFF" + uint32 total size + "WEBP" FourCC
-	anmfFrameHeaderSize = 16 // Frame X, Y, Width, Height, Duration, Flags
-)
-
 // DecodeWebPFirstFrame decodes the first frame of an animated WebP.
-func DecodeWebPFirstFrame(r io.Reader) (image.Image, error) {
+func (d *Decoder) DecodeWebPFirstFrame(r io.Reader) (image.Image, error) {
+	if d.opts.ConcurrencyLevel != 0 {
+		d.sem <- struct{}{}
+		defer func() { <-d.sem }()
+	}
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("webp: read failed: %w", err)
 	}
 
-	if len(data) < riffContainerSize || string(data[:4]) != "RIFF" || string(data[riffChunkHeaderSize:riffContainerSize]) != "WEBP" {
+	if len(data) < riffContainerSize || string(data[:4]) != "RIFF" ||
+		string(data[riffChunkHeaderSize:riffContainerSize]) != "WEBP" {
 		return nil, errors.New("webp: not a WebP file")
 	}
 

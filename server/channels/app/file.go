@@ -992,7 +992,7 @@ func (t *UploadFileTask) preprocessImage() *model.AppError {
 
 	// Animated WebP: pre-decode first frame; standard decoder fails on ANMF chunks.
 	if t.fileinfo.MimeType == "image/webp" {
-		if img, err := imaging.DecodeWebPFirstFrame(io.MultiReader(bytes.NewReader(t.buf.Bytes()), t.teeInput)); err == nil {
+		if img, err := t.imgDecoder.DecodeWebPFirstFrame(io.MultiReader(bytes.NewReader(t.buf.Bytes()), t.teeInput)); err == nil {
 			t.fileinfo.HasPreviewImage = false
 			t.decoded = img
 			t.imageType = "webp"
@@ -1242,7 +1242,7 @@ func prepareImage(rctx request.CTX, imgDecoder *imaging.Decoder, imgData io.Read
 	img, imgType, release, err = imgDecoder.DecodeMemBounded(imgData)
 	if err != nil {
 		if _, seekErr := imgData.Seek(0, io.SeekStart); seekErr == nil {
-			if firstFrame, webpErr := imaging.DecodeWebPFirstFrame(imgData); webpErr == nil {
+			if firstFrame, webpErr := imgDecoder.DecodeWebPFirstFrame(imgData); webpErr == nil {
 				img, imgType, release, err = firstFrame, "webp", func() {}, nil
 			}
 		}

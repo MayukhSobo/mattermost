@@ -122,6 +122,9 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 	imgDir, ok := fileutils.FindDir("tests")
 	require.True(t, ok)
 
+	d, err := NewDecoder(DecoderOptions{})
+	require.NoError(t, err)
+
 	// Load the static WebP fixture and extract its VP8 chunk to use as a real,
 	// decodable frame bitstream inside synthetic animated containers.
 	staticData, err := os.ReadFile(imgDir + "/testwebp.webp")
@@ -180,17 +183,17 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 	}
 
 	t.Run("empty input", func(t *testing.T) {
-		_, err := DecodeWebPFirstFrame(bytes.NewReader(nil))
+		_, err := d.DecodeWebPFirstFrame(bytes.NewReader(nil))
 		require.Error(t, err)
 	})
 
 	t.Run("non-RIFF data", func(t *testing.T) {
-		_, err := DecodeWebPFirstFrame(bytes.NewReader([]byte("not a webp file at all")))
+		_, err := d.DecodeWebPFirstFrame(bytes.NewReader([]byte("not a webp file at all")))
 		require.Error(t, err)
 	})
 
 	t.Run("truncated header under 12 bytes", func(t *testing.T) {
-		_, err := DecodeWebPFirstFrame(bytes.NewReader([]byte("RIFF")))
+		_, err := d.DecodeWebPFirstFrame(bytes.NewReader([]byte("RIFF")))
 		require.Error(t, err)
 	})
 
@@ -199,18 +202,18 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 		copy(h, "RIFF")
 		binary.LittleEndian.PutUint32(h[4:], 4)
 		copy(h[8:], "AVI ")
-		_, err := DecodeWebPFirstFrame(bytes.NewReader(h))
+		_, err := d.DecodeWebPFirstFrame(bytes.NewReader(h))
 		require.Error(t, err)
 	})
 
 	t.Run("read error propagated", func(t *testing.T) {
-		_, err := DecodeWebPFirstFrame(iotest.ErrReader(errors.New("deliberate")))
+		_, err := d.DecodeWebPFirstFrame(iotest.ErrReader(errors.New("deliberate")))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "read failed")
 	})
 
 	t.Run("static WebP with no ANMF chunks", func(t *testing.T) {
-		_, err := DecodeWebPFirstFrame(bytes.NewReader(staticData))
+		_, err := d.DecodeWebPFirstFrame(bytes.NewReader(staticData))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no decodable animation frame found")
 	})
@@ -240,13 +243,13 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 		paddingChunk := mkChunk("PADD", make([]byte, 464)) // 8+464 = 472 bytes
 
 		require.NotPanics(t, func() {
-			_, err := DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(paddingChunk, malformedANMF)))
+			_, err := d.DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(paddingChunk, malformedANMF)))
 			require.Error(t, err)
 		})
 	})
 
 	t.Run("valid animated WebP VP8 frame decoded successfully", func(t *testing.T) {
-		img, err := DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(vp8Chunk))))
+		img, err := d.DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(vp8Chunk))))
 		require.NoError(t, err)
 		require.NotNil(t, img)
 	})
@@ -257,14 +260,14 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 	// is silently skipped. Fix: walk subchunks until VP8/VP8L is found.
 	t.Run("ANMF with ALPH subchunk before VP8 decodes first frame", func(t *testing.T) {
 		alphChunk := mkChunk("ALPH", []byte{0x00}) // minimal 1-byte alpha flags payload
-		img, err := DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(alphChunk, vp8Chunk))))
+		img, err := d.DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(alphChunk, vp8Chunk))))
 		require.NoError(t, err)
 		require.NotNil(t, img)
 	})
 
 	t.Run("unknown subchunk before VP8 is walked past", func(t *testing.T) {
 		unknChunk := mkChunk("EXTN", []byte{0x01, 0x02, 0x03, 0x04})
-		img, err := DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(unknChunk, vp8Chunk))))
+		img, err := d.DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(unknChunk, vp8Chunk))))
 		require.NoError(t, err)
 		require.NotNil(t, img)
 	})
@@ -272,14 +275,14 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 	t.Run("multiple ANMF frames returns first frame", func(t *testing.T) {
 		badVP8 := mkChunk("VP8 ", []byte("not a real vp8 bitstream"))
 		data := wrapWebP(mkANMF(vp8Chunk), mkANMF(badVP8))
-		img, err := DecodeWebPFirstFrame(bytes.NewReader(data))
+		img, err := d.DecodeWebPFirstFrame(bytes.NewReader(data))
 		require.NoError(t, err)
 		require.NotNil(t, img)
 	})
 
 	t.Run("corrupted VP8 bitstream returns decode error", func(t *testing.T) {
 		badVP8 := mkChunk("VP8 ", []byte("corrupted bitstream"))
-		_, err := DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(badVP8))))
+		_, err := d.DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(badVP8))))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "first frame decode failed")
 	})
@@ -287,14 +290,14 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 	t.Run("odd-sized chunk before ANMF offset padding is correct", func(t *testing.T) {
 		// An odd-payload chunk exercises the offset++ padding in the outer chunk loop.
 		oddChunk := mkChunk("EXIF", []byte{0x01, 0x02, 0x03}) // 3 bytes = odd
-		img, err := DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(oddChunk, mkANMF(vp8Chunk))))
+		img, err := d.DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(oddChunk, mkANMF(vp8Chunk))))
 		require.NoError(t, err)
 		require.NotNil(t, img)
 	})
 
 	t.Run("outer ANMF chunk truncated beyond file end breaks safely", func(t *testing.T) {
 		data := wrapWebP(mkANMF(vp8Chunk))
-		_, err := DecodeWebPFirstFrame(bytes.NewReader(data[:len(data)-100]))
+		_, err := d.DecodeWebPFirstFrame(bytes.NewReader(data[:len(data)-100]))
 		require.Error(t, err)
 	})
 
@@ -304,7 +307,7 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 		copy(badSubchunk, "VP8 ")
 		binary.LittleEndian.PutUint32(badSubchunk[4:], 9999)
 		require.NotPanics(t, func() {
-			_, err := DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(badSubchunk))))
+			_, err := d.DecodeWebPFirstFrame(bytes.NewReader(wrapWebP(mkANMF(badSubchunk))))
 			require.Error(t, err)
 		})
 	})
