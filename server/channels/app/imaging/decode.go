@@ -133,29 +133,38 @@ func GetDimensions(imageData io.Reader) (width int, height int, err error) {
 }
 
 // DecodeWebPFirstFrame decodes the first frame of an animated WebP.
+// It streams the RIFF chunk list so only the first ANMF frame payload is read
+// into memory — the rest of the file is discarded without buffering.
 func (d *Decoder) DecodeWebPFirstFrame(r io.Reader) (image.Image, error) {
 	if d.opts.ConcurrencyLevel != 0 {
 		d.sem <- struct{}{}
 		defer func() { <-d.sem }()
 	}
-	data, err := io.ReadAll(r)
-	if err != nil {
+
+	var header [riffContainerSize]byte
+	if _, err := io.ReadFull(r, header[:]); err != nil {
 		return nil, fmt.Errorf("webp: read failed: %w", err)
 	}
-	if len(data) < riffContainerSize || string(data[:4]) != "RIFF" || string(data[riffChunkHeaderSize:riffContainerSize]) != "WEBP" {
+	if string(header[:4]) != "RIFF" || string(header[riffChunkHeaderSize:]) != "WEBP" {
 		return nil, errors.New("webp: not a WebP file")
 	}
-	for off := riffContainerSize; off+riffChunkHeaderSize <= len(data); {
-		id := string(data[off : off+4])
-		size := int(binary.LittleEndian.Uint32(data[off+4 : off+riffChunkHeaderSize]))
-		end := off + riffChunkHeaderSize + size
-		if end > len(data) {
+
+	var chunkHdr [riffChunkHeaderSize]byte
+	for {
+		if _, err := io.ReadFull(r, chunkHdr[:]); err != nil {
 			break
 		}
+		id := string(chunkHdr[:4])
+		size := int(binary.LittleEndian.Uint32(chunkHdr[4:]))
+
 		if id == "ANMF" && size >= anmfFrameHeaderSize+riffChunkHeaderSize {
-			container, cErr := anmfContainer(data[off+riffChunkHeaderSize : end])
-			if cErr != nil {
-				return nil, cErr
+			payload := make([]byte, size)
+			if _, err := io.ReadFull(r, payload); err != nil {
+				break
+			}
+			container, err := anmfContainer(payload)
+			if err != nil {
+				return nil, err
 			}
 			img, _, err := image.Decode(bytes.NewReader(container))
 			if err != nil {
@@ -163,9 +172,13 @@ func (d *Decoder) DecodeWebPFirstFrame(r io.Reader) (image.Image, error) {
 			}
 			return img, nil
 		}
-		off += riffChunkHeaderSize + size
+
+		skip := int64(size)
 		if size%2 != 0 {
-			off++
+			skip++
+		}
+		if _, err := io.CopyN(io.Discard, r, skip); err != nil {
+			break
 		}
 	}
 	return nil, errors.New("webp: no decodable animation frame found")
