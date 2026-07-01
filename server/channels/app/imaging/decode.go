@@ -143,9 +143,9 @@ func DecodeWebPFirstFrame(r io.Reader) (image.Image, error) {
 	}
 
 	for off := riffContainerSize; off+riffChunkHeaderSize <= len(data); {
-		id   := string(data[off : off+4])
+		id := string(data[off : off+4])
 		size := int(binary.LittleEndian.Uint32(data[off+4 : off+riffChunkHeaderSize]))
-		end  := off + riffChunkHeaderSize + size
+		end := off + riffChunkHeaderSize + size
 		if end > len(data) {
 			break
 		}
@@ -153,9 +153,9 @@ func DecodeWebPFirstFrame(r io.Reader) (image.Image, error) {
 		if id == "ANMF" && size >= anmfFrameHeaderSize+riffChunkHeaderSize {
 			frame := data[off+riffChunkHeaderSize+anmfFrameHeaderSize : end]
 			for pos := 0; pos+riffChunkHeaderSize <= len(frame); {
-				subID   := string(frame[pos : pos+4])
+				subID := string(frame[pos : pos+4])
 				subSize := int(binary.LittleEndian.Uint32(frame[pos+4 : pos+riffChunkHeaderSize]))
-				subEnd  := pos + riffChunkHeaderSize + subSize
+				subEnd := pos + riffChunkHeaderSize + subSize
 				if subEnd > len(frame) {
 					break
 				}

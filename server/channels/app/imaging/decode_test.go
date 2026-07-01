@@ -142,13 +142,14 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 	// mkChunk builds a RIFF-style chunk: 4-byte id + 4-byte LE size + payload.
 	// A pad byte is appended when payload length is odd, per the RIFF spec.
 	mkChunk := func(id string, payload []byte) []byte {
-		out := make([]byte, 8+len(payload))
+		sz := 8 + len(payload)
+		if len(payload)%2 != 0 {
+			sz++
+		}
+		out := make([]byte, sz)
 		copy(out, id)
 		binary.LittleEndian.PutUint32(out[4:], uint32(len(payload)))
 		copy(out[8:], payload)
-		if len(payload)%2 != 0 {
-			out = append(out, 0)
-		}
 		return out
 	}
 
@@ -166,7 +167,7 @@ func TestDecodeWebPFirstFrame(t *testing.T) {
 	// wrapWebP places the given chunks inside a minimal RIFF/WEBP container.
 	wrapWebP := func(chunks ...[]byte) []byte {
 		var body bytes.Buffer
-		body.Write([]byte("WEBP"))
+		body.WriteString("WEBP")
 		for _, c := range chunks {
 			body.Write(c)
 		}
